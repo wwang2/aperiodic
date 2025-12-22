@@ -10,7 +10,7 @@ When information is encoded in the global structure of a tiling, erasing a local
 
 ## Live Demo
 
-Visit the interactive demo at: https://[username].github.io/aperiodic/
+Visit the interactive demo at: https://wwang2.github.io/aperiodic/
 
 ## Features
 
