@@ -2,7 +2,7 @@ import { useRef, useEffect, useState, useCallback } from 'react';
 import * as d3 from 'd3';
 import { generatePenroseTiling, tileToPath } from '../engine/penrose';
 import { generatePeriodicTiling } from '../engine/periodic';
-import { recoverTiles, getRecoveryOrder } from '../engine/recovery';
+import { recoverTiles, getRecoveryOrder, getNeighbors } from '../engine/recovery';
 import type { Tile } from '../engine/penrose';
 
 type Mode = 'penrose' | 'periodic';
@@ -36,6 +36,10 @@ export function ErasureDemo() {
   const [eraseCenter, setEraseCenter] = useState<{ x: number; y: number } | null>(null);
   const [caption, setCaption] = useState('Click and drag to erase a region of the tiling.');
 
+  // Animation state
+  const [recoveringIndex, setRecoveringIndex] = useState<number | null>(null);
+  const [constraintIndices, setConstraintIndices] = useState<Set<number>>(new Set());
+
   const width = 1100;
   const height = 500;
   const eraseRadius = 50;
@@ -50,6 +54,8 @@ export function ErasureDemo() {
     setEraseCenter(null);
     setState('idle');
     setCaption('Click and drag to erase a region.');
+    setRecoveringIndex(null);
+    setConstraintIndices(new Set());
   }, [mode]);
 
   // Render with D3
@@ -88,14 +94,25 @@ export function ErasureDemo() {
       .join('path')
       .attr('d', d => tileToPath(d))
       .attr('fill', (d, i) => {
+        if (recoveringIndex === i) {
+           return d.type === 'thick'
+             ? d3.color(colors.thick)?.copy({ opacity: 0.5 }).toString() || colors.thick
+             : d3.color(colors.thin)?.copy({ opacity: 0.5 }).toString() || colors.thin;
+        }
         if (erasedTiles.has(i)) return colors.erased;
         return d.type === 'thick' ? colors.thick : colors.thin;
       })
       .attr('stroke', (d, i) => {
+        if (constraintIndices.has(i)) return '#fbbf24'; // Amber-400 (Gold)
+        if (recoveringIndex === i) return '#ffffff';
         if (erasedTiles.has(i)) return colors.erased;
         return d.type === 'thick' ? colors.thickStroke : colors.thinStroke;
       })
-      .attr('stroke-width', 0.5)
+      .attr('stroke-width', (d, i) => {
+        if (constraintIndices.has(i)) return 2.5;
+        if (recoveringIndex === i) return 2;
+        return 0.5;
+      })
       .attr('stroke-linejoin', 'round');
 
     // Erase preview circle
@@ -110,7 +127,7 @@ export function ErasureDemo() {
         .attr('stroke-dasharray', '8,4')
         .attr('opacity', 0.8);
     }
-  }, [tiles, erasedTiles, eraseCenter, state, mode]);
+  }, [tiles, erasedTiles, eraseCenter, state, mode, recoveringIndex, constraintIndices]);
 
   const getMousePosition = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
     const svg = svgRef.current;
@@ -169,36 +186,49 @@ export function ErasureDemo() {
 
     const erasedIndices = Array.from(erasedTiles);
 
+    // Prepare correct tiles first
+    let currentTiles = tiles;
+    if (mode === 'periodic') {
+       currentTiles = recoverTiles(tiles, erasedIndices, mode);
+       setTiles(currentTiles); // Apply the shift immediately so visualization makes sense
+    }
+
+    const orderedIndices = getRecoveryOrder(currentTiles, erasedIndices, eraseCenter);
+    const recovered = new Set(erasedTiles);
+
+    setCaption(mode === 'penrose'
+      ? 'Step-by-step: Neighbors provide constraints to uniquely fix the hole...'
+      : 'Step-by-step: Local neighbors fit, but global phase is lost...');
+
+    for (let i = 0; i < orderedIndices.length; i++) {
+      const index = orderedIndices[i];
+
+      // 1. Identify constraints (neighbors that are NOT erased)
+      const neighbors = getNeighbors(index, currentTiles);
+      const validNeighbors = neighbors.filter(n => !recovered.has(n));
+      setConstraintIndices(new Set(validNeighbors));
+
+      // 2. Show "calculating" state
+      setRecoveringIndex(index);
+
+      // Wait to visualize the thought process
+      await new Promise(resolve => setTimeout(resolve, 80));
+
+      // 3. Fix the tile
+      recovered.delete(index);
+      setErasedTiles(new Set(recovered));
+
+      // Clear transient states
+      setRecoveringIndex(null);
+      // setConstraintIndices(new Set()); // Optional: keep them lit briefly or clear immediately
+    }
+
+    setConstraintIndices(new Set());
+
     if (mode === 'penrose') {
-      setCaption('Recovering — the matching rules force a unique solution...');
-
-      // Order recovery from outside-in
-      const orderedIndices = getRecoveryOrder(tiles, erasedIndices, eraseCenter);
-      const recovered = new Set(erasedTiles);
-
-      for (let i = 0; i < orderedIndices.length; i++) {
-        await new Promise(resolve => setTimeout(resolve, 25));
-        recovered.delete(orderedIndices[i]);
-        setErasedTiles(new Set(recovered));
-      }
-
       setCaption('Done. The pattern is uniquely determined by its boundary.');
     } else {
-      setCaption('In a periodic tiling, any translated copy fits...');
-
-      const recoveredTiles = recoverTiles(tiles, erasedIndices, mode);
-      setTiles(recoveredTiles);
-
-      const orderedIndices = getRecoveryOrder(tiles, erasedIndices, eraseCenter);
-      const recovered = new Set(erasedTiles);
-
-      for (let i = 0; i < orderedIndices.length; i++) {
-        await new Promise(resolve => setTimeout(resolve, 25));
-        recovered.delete(orderedIndices[i]);
-        setErasedTiles(new Set(recovered));
-      }
-
-      setCaption('The recovered tiles are shifted — global phase information was lost.');
+      setCaption('Done. The recovered tiles are shifted — global phase information was lost.');
     }
 
     setState('idle');
@@ -213,6 +243,8 @@ export function ErasureDemo() {
     setEraseCenter(null);
     setState('idle');
     setCaption('Click and drag to erase a region of the tiling.');
+    setRecoveringIndex(null);
+    setConstraintIndices(new Set());
   }, [mode]);
 
   return (

@@ -98,3 +98,38 @@ export function getRecoveryOrder(
     return distB - distA; // Outer tiles first
   });
 }
+
+/**
+ * Find neighbors of a specific tile
+ * Uses shared vertices to identify adjacency (sharing an edge)
+ */
+export function getNeighbors(
+  targetIndex: number,
+  allTiles: Tile[]
+): number[] {
+  const target = allTiles[targetIndex];
+  const neighbors: number[] = [];
+  const eps = 1.0; // Tolerance for vertex matching
+
+  allTiles.forEach((tile, index) => {
+    if (index === targetIndex) return;
+
+    // Count shared vertices
+    let shared = 0;
+    for (const v1 of target.vertices) {
+      for (const v2 of tile.vertices) {
+        if (Math.abs(v1.x - v2.x) < eps && Math.abs(v1.y - v2.y) < eps) {
+          shared++;
+          break; // Move to next v1
+        }
+      }
+    }
+
+    // Sharing 2 vertices means sharing an edge
+    if (shared >= 2) {
+      neighbors.push(index);
+    }
+  });
+
+  return neighbors;
+}
